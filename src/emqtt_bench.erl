@@ -93,7 +93,7 @@
          {qos, $q, "qos", {integer, 0},
           "subscribe qos"},
          {username, $u, "username", string,
-          "username for connecting to server"},
+          "username for connecting to server, support %i variable"},
          {password, $P, "password", string,
           "password for connecting to server"},
          {keepalive, $k, "keepalive", {integer, 300},
@@ -384,12 +384,13 @@ connect(Parent, N, PubSub, Opts) ->
                 {tcp_opts, tcp_opts(Opts)},
                 {ssl_opts, ssl_opts(Opts)}
                | mqtt_opts(Opts)],
-    MqttOpts1 = case PubSub of
-                  conn -> [{force_ping, true} | MqttOpts];
-                  _ -> MqttOpts
+    MqttOpts1 = interpolate_username(MqttOpts, N),
+    MqttOpts2 = case PubSub of
+                  conn -> [{force_ping, true} | MqttOpts1];
+                  _ -> MqttOpts1
                 end,
     AllOpts  = [{seq, N}, {client_id, ClientId} | Opts],
-	{ok, Client} = emqtt:start_link(MqttOpts1),
+	{ok, Client} = emqtt:start_link(MqttOpts2),
     ConnectFun = connect_fun(Opts),
     ConnRet = emqtt:ConnectFun(Client),
     case ConnRet of
@@ -412,7 +413,7 @@ loop(Parent, N, Client, PubSub, Opts) ->
     receive
         publish ->
            case (proplists:get_value(limit_fun, Opts))() of
-                true -> 
+                true ->
                     case publish(Client, Opts) of
                         ok -> inc_counter(sent);
                         {ok, _} ->
@@ -515,6 +516,19 @@ mqtt_opts([{lowmem, Bool}|Opts], Acc) ->
     mqtt_opts(Opts, [{low_mem, Bool} | Acc]);
 mqtt_opts([_|Opts], Acc) ->
     mqtt_opts(Opts, Acc).
+
+
+interpolate_username(Opts, N) ->
+    case proplists:lookup(username, Opts) of
+      none -> Opts;
+      {username, Username} ->
+          lists:keyreplace(username,
+                            1,
+                            Opts,
+                            {username, interpolate_num(Username, N)})
+    end.
+
+
 
 tcp_opts(Opts) ->
     tcp_opts(Opts, []).
@@ -623,6 +637,9 @@ join(Words) ->
                         {false, <<W/binary, "/", Tail/binary>>}
                 end, {true, <<>>}, [bin(W) || W <- Words]),
     Bin.
+
+interpolate_num(Str, N) ->
+    string:replace(Str, "%i", integer_to_list(N)).
 
 bin(A) when is_atom(A)   -> bin(atom_to_list(A));
 bin(I) when is_integer(I)-> bin(integer_to_list(I));
